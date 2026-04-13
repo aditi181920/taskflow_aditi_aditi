@@ -94,7 +94,13 @@ This user owns a project called "Website Redesign" with 3 tasks in different sta
 
 All endpoints return `Content-Type: application/json`. Non-auth endpoints require `Authorization: Bearer <token>`.
 
-Full interactive documentation is available at **http://localhost:8000/docs** when the server is running.
+Once the server is running, open **http://localhost:8000/docs** in your browser to access the interactive Swagger UI. You can test every endpoint directly from the browser:
+
+1. Call `POST /auth/login` with `{"email":"test@example.com","password":"password123"}`
+2. Copy the `token` from the response
+3. Click the **Authorize** button (top right), paste the token, and click **Authorize**
+4. All subsequent requests will include the JWT automatically
+
 
 ### Authentication
 
@@ -300,7 +306,7 @@ taskflow/
 
 - **Pagination**: All list endpoints support `?page=` and `?limit=` with total count in responses.
 - **Stats endpoint**: `GET /projects/:id/stats` returns task counts grouped by status and by assignee.
-- **Integration tests**: 12 tests covering auth (register, login, validation, duplicate, wrong password, no-token) and tasks (create, filter, null-update, delete authorization, stats). Run with `pytest tests/ -v`.
+- **Integration tests**: 65 tests covering all endpoints, validation, authorization, error cases, and edge cases. Run with `docker compose exec api pytest tests/ -v`.
 
 ## What I'd Do With More Time
 
