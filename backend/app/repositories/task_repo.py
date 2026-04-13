@@ -19,16 +19,23 @@ async def list_by_project(
     *,
     status: str | None = None,
     assignee_id: UUID | None = None,
-) -> list[sa.Row]:
-    """List tasks for a project, optionally filtered by status and/or assignee."""
-    query = sa.select(tasks).where(tasks.c.project_id == project_id)
+    page: int = 1,
+    limit: int = 20,
+) -> tuple[list[sa.Row], int]:
+    """List tasks for a project with optional filters. Returns (rows, total_count)."""
+    base = sa.select(tasks).where(tasks.c.project_id == project_id)
     if status:
-        query = query.where(tasks.c.status == status)
+        base = base.where(tasks.c.status == status)
     if assignee_id:
-        query = query.where(tasks.c.assignee_id == assignee_id)
-    query = query.order_by(tasks.c.created_at.desc())
+        base = base.where(tasks.c.assignee_id == assignee_id)
+
+    count_result = await conn.execute(sa.select(sa.func.count()).select_from(base.subquery()))
+    total = count_result.scalar() or 0
+
+    offset = (page - 1) * limit
+    query = base.order_by(tasks.c.created_at.desc()).offset(offset).limit(limit)
     result = await conn.execute(query)
-    return list(result.fetchall())
+    return list(result.fetchall()), total
 
 
 async def get_by_id(conn: AsyncConnection, task_id: UUID) -> sa.Row | None:
@@ -64,14 +71,13 @@ async def create(
 
 
 async def update(conn: AsyncConnection, task_id: UUID, **fields) -> sa.Row | None:
-    """Partial update — only provided fields are written."""
-    update_data = {k: v for k, v in fields.items() if v is not None}
-    if not update_data:
+    """Partial update — writes all provided fields, including explicit nulls."""
+    if not fields:
         return await get_by_id(conn, task_id)
     result = await conn.execute(
         sa.update(tasks)
         .where(tasks.c.id == task_id)
-        .values(**update_data)
+        .values(**fields)
         .returning(tasks)
     )
     return result.first()

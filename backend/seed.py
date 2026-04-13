@@ -9,11 +9,14 @@ Test credentials:
   Password: password123
 """
 
+import logging
 import os
 import sys
 
-from sqlalchemy import create_engine, text
 from passlib.context import CryptContext
+from sqlalchemy import create_engine, text
+
+logging.getLogger("passlib").setLevel(logging.ERROR)
 
 DATABASE_URL_SYNC = os.environ.get(
     "DATABASE_URL_SYNC",

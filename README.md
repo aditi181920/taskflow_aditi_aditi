@@ -36,8 +36,6 @@ This makes each layer independently testable and prevents "god functions" that d
 
 ### Authentication vs Authorization separation
 
-The spec explicitly says: *"Do not conflate 401 and 403."*
-
 - **Authentication (401)**: Handled by `get_current_user` dependency — extracts JWT, validates claims, loads user. If any step fails → 401 "unauthorized"
 - **Authorization (403)**: Handled in each route handler — checks `project.owner_id == current_user.id` before allowing updates/deletes. If check fails → 403 "forbidden"
 
@@ -131,22 +129,26 @@ Response (200): Same shape as register.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/projects` | List projects the current user owns or has tasks in |
+| GET | `/projects` | List projects (supports `?page=` and `?limit=`) |
 | POST | `/projects` | Create a project (owner = current user) |
 | GET | `/projects/:id` | Get project details + its tasks |
 | PATCH | `/projects/:id` | Update name/description (owner only) |
 | DELETE | `/projects/:id` | Delete project and all its tasks (owner only) |
+| GET | `/projects/:id/stats` | Task counts by status and by assignee (bonus) |
 
-**List projects:**
+**List projects (with pagination):**
 ```bash
-curl http://localhost:8000/projects -H "Authorization: Bearer <token>"
+curl "http://localhost:8000/projects?page=1&limit=10" -H "Authorization: Bearer <token>"
 ```
 Response (200):
 ```json
 {
   "projects": [
     { "id": "uuid", "name": "Website Redesign", "description": "Q2 project", "owner_id": "uuid", "created_at": "..." }
-  ]
+  ],
+  "page": 1,
+  "limit": 10,
+  "total": 1
 }
 ```
 
@@ -180,26 +182,39 @@ curl -X DELETE http://localhost:8000/projects/<id> -H "Authorization: Bearer <to
 ```
 Response: 204 No Content
 
+**Project stats (bonus):**
+```bash
+curl http://localhost:8000/projects/<id>/stats -H "Authorization: Bearer <token>"
+```
+Response (200):
+```json
+{
+  "total": 3,
+  "by_status": { "todo": 1, "in_progress": 1, "done": 1 },
+  "by_assignee": { "<user_uuid>": 2, "unassigned": 1 }
+}
+
 ### Tasks
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/projects/:id/tasks` | List tasks — supports `?status=` and `?assignee=` filters |
+| GET | `/projects/:id/tasks` | List tasks — supports `?status=`, `?assignee=`, `?page=`, `?limit=` |
 | POST | `/projects/:id/tasks` | Create a task |
 | PATCH | `/tasks/:id` | Update title, description, status, priority, assignee, due_date |
 | DELETE | `/tasks/:id` | Delete task (project owner or task creator only) |
 
-**List tasks with filters:**
+**List tasks with filters and pagination:**
 ```bash
-curl "http://localhost:8000/projects/<id>/tasks?status=todo&assignee=<user_id>" \
+curl "http://localhost:8000/projects/<id>/tasks?status=todo&page=1&limit=10" \
   -H "Authorization: Bearer <token>"
 ```
 Response (200):
 ```json
 {
-  "tasks": [
-    { "id": "uuid", "title": "Design homepage", "status": "todo", "priority": "high", "assignee_id": "uuid", "due_date": "2026-04-15", "created_at": "...", "updated_at": "..." }
-  ]
+  "tasks": [ { "id": "uuid", "title": "Design homepage", "status": "todo", ... } ],
+  "page": 1,
+  "limit": 10,
+  "total": 1
 }
 ```
 
@@ -254,6 +269,11 @@ taskflow/
     │   └── versions/
     │       └── 001_initial_schema.py   # Up + down migration
     ├── seed.py                 # Idempotent test data
+    ├── tests/                  # Integration tests (pytest)
+    │   ├── conftest.py
+    │   ├── test_integration_auth.py
+    │   ├── test_integration_projects.py
+    │   └── test_integration_tasks.py
     └── app/
         ├── main.py             # App setup, CORS, shutdown
         ├── config.py           # Env var loading via Pydantic
@@ -276,15 +296,18 @@ taskflow/
             └── task_repo.py
 ```
 
+## Bonus Features Implemented
+
+- **Pagination**: All list endpoints support `?page=` and `?limit=` with total count in responses.
+- **Stats endpoint**: `GET /projects/:id/stats` returns task counts grouped by status and by assignee.
+- **Integration tests**: 12 tests covering auth (register, login, validation, duplicate, wrong password, no-token) and tasks (create, filter, null-update, delete authorization, stats). Run with `pytest tests/ -v`.
+
 ## What I'd Do With More Time
 
 ### Things I'd add
 
-- **Pagination**: List endpoints should support `?page=&limit=` with cursor-based pagination for large datasets. Currently returns all results which won't scale.
-- **Integration tests**: At least 3 tests covering auth flow, task CRUD, and authorization checks. Would use pytest with httpx's async client and a test database.
 - **Rate limiting**: Auth endpoints are vulnerable to brute force. Would add `slowapi` or handle at the reverse proxy level.
 - **Request ID tracing**: Add `X-Request-ID` header propagation so logs can be correlated across requests.
-- **Stats endpoint**: `GET /projects/:id/stats` returning task counts by status and by assignee — useful aggregate query.
 
 ### Shortcuts I took
 

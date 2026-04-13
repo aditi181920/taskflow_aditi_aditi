@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from app.database import dispose_engine
 from app.exceptions import register_exception_handlers
@@ -69,8 +70,33 @@ app.include_router(tasks.router)
 register_exception_handlers(app)
 
 
+def custom_openapi():
+    """Remove FastAPI's default 422 responses from the OpenAPI schema.
+
+    We use a custom 400 format instead: {"error": "...", "fields": {...}}.
+    The default 422 is confusing and doesn't match our actual error format.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    for path in schema.get("paths", {}).values():
+        for operation in path.values():
+            responses = operation.get("responses", {})
+            responses.pop("422", None)
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
+
+
 # Graceful shutdown on SIGTERM (Docker sends this on container stop)
-def _handle_sigterm(signum, frame):
+def _handle_sigterm(_signum, _frame):
     log.info("received_sigterm")
     sys.exit(0)
 

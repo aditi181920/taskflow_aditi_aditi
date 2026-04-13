@@ -4,11 +4,13 @@ Project CRUD endpoints.
 Authorization model:
   - List/Get: user must own the project or have tasks assigned in it.
   - Create: any authenticated user (owner = current user).
-  - Update/Delete: project owner only (→ 403 otherwise).
+  - Update/Delete: project owner only (-> 403 otherwise).
 """
 
+from uuid import UUID
+
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.database import get_db
@@ -24,11 +26,18 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
     user=Depends(get_current_user),
     conn: AsyncConnection = Depends(get_db),
 ):
-    rows = await project_repo.list_for_user(conn, user.id)
-    return ProjectListResponse(projects=[ProjectResponse(**row._mapping) for row in rows])
+    rows, total = await project_repo.list_for_user(conn, user.id, page=page, limit=limit)
+    return ProjectListResponse(
+        projects=[ProjectResponse(**row._mapping) for row in rows],
+        page=page,
+        limit=limit,
+        total=total,
+    )
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
@@ -44,7 +53,7 @@ async def create_project(
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
 async def get_project(
-    project_id: str,
+    project_id: UUID,
     user=Depends(get_current_user),
     conn: AsyncConnection = Depends(get_db),
 ):
@@ -52,7 +61,12 @@ async def get_project(
     if not project:
         raise NotFoundError()
 
-    task_rows = await task_repo.list_by_project(conn, project_id)
+    # Access check: user must own the project or have tasks assigned in it
+    has_access = await project_repo.user_has_access(conn, project_id, user.id)
+    if not has_access:
+        raise NotFoundError()
+
+    task_rows, _ = await task_repo.list_by_project(conn, project_id, limit=1000)
     return ProjectDetailResponse(
         **project._mapping,
         tasks=[TaskResponse(**t._mapping) for t in task_rows],
@@ -61,7 +75,7 @@ async def get_project(
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
-    project_id: str,
+    project_id: UUID,
     body: ProjectUpdate,
     user=Depends(get_current_user),
     conn: AsyncConnection = Depends(get_db),
@@ -72,14 +86,31 @@ async def update_project(
     if project.owner_id != user.id:
         raise ForbiddenError()
 
-    updated = await project_repo.update(conn, project_id, name=body.name, description=body.description)
+    # Use model_fields_set to allow explicit null for description
+    update_fields = {k: getattr(body, k) for k in body.model_fields_set}
+    updated = await project_repo.update(conn, project_id, **update_fields)
     log.info("project_updated", project_id=str(project_id), user_id=str(user.id))
     return ProjectResponse(**updated._mapping)
 
 
+@router.get("/{project_id}/stats")
+async def get_project_stats(
+    project_id: UUID,
+    user=Depends(get_current_user),
+    conn: AsyncConnection = Depends(get_db),
+):
+    """Task counts grouped by status and by assignee."""
+    project = await project_repo.get_by_id(conn, project_id)
+    if not project:
+        raise NotFoundError()
+
+    stats = await project_repo.get_stats(conn, project_id)
+    return stats
+
+
 @router.delete("/{project_id}", status_code=204)
 async def delete_project(
-    project_id: str,
+    project_id: UUID,
     user=Depends(get_current_user),
     conn: AsyncConnection = Depends(get_db),
 ):

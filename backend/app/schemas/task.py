@@ -5,7 +5,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TaskStatus(str, Enum):
@@ -27,6 +27,14 @@ class TaskCreate(BaseModel):
     assignee_id: Optional[UUID] = None
     due_date: Optional[date] = None
 
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=500)
@@ -35,6 +43,16 @@ class TaskUpdate(BaseModel):
     priority: Optional[TaskPriority] = None
     assignee_id: Optional[UUID] = None
     due_date: Optional[date] = None
+
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: str | None) -> str | None:
+        if v is not None:
+            stripped = v.strip()
+            if not stripped:
+                raise ValueError("must not be blank")
+            return stripped
+        return v
 
 
 class TaskResponse(BaseModel):
@@ -54,3 +72,6 @@ class TaskResponse(BaseModel):
 class TaskListResponse(BaseModel):
     """Wraps list of tasks per spec: {"tasks": [...]}"""
     tasks: list[TaskResponse]
+    page: int = 1
+    limit: int = 20
+    total: int = 0

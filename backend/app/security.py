@@ -5,6 +5,7 @@ Password hashing and JWT token management.
 - Tokens: HS256 JWTs with user_id (sub) and email in claims.
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -12,6 +13,9 @@ from jose import jwt, JWTError
 from passlib.context import CryptContext
 
 from app.config import settings
+
+# Suppress passlib's noisy warning about newer bcrypt versions
+logging.getLogger("passlib").setLevel(logging.ERROR)
 
 pwd_context = CryptContext(
     schemes=["bcrypt"],

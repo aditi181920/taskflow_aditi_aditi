@@ -5,8 +5,9 @@ Creates a single connection pool at startup. Route handlers obtain
 connections via the `get_db` dependency (see dependencies.py).
 """
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncConnection
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from app.config import settings
 

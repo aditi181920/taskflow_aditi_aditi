@@ -13,14 +13,64 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.models import projects, tasks
 
 
-async def list_for_user(conn: AsyncConnection, user_id: UUID) -> list[sa.Row]:
-    """Projects the user owns or has tasks in."""
+async def list_for_user(
+    conn: AsyncConnection, user_id: UUID, *, page: int = 1, limit: int = 20
+) -> tuple[list[sa.Row], int]:
+    """Projects the user owns or has tasks in. Returns (rows, total_count)."""
     owned = sa.select(projects.c.id).where(projects.c.owner_id == user_id)
     assigned = sa.select(tasks.c.project_id.label("id")).where(tasks.c.assignee_id == user_id).distinct()
     combined = sa.union(owned, assigned).subquery()
-    query = sa.select(projects).where(projects.c.id.in_(sa.select(combined.c.id)))
+    base = sa.select(projects).where(projects.c.id.in_(sa.select(combined.c.id)))
+
+    count_result = await conn.execute(sa.select(sa.func.count()).select_from(base.subquery()))
+    total = count_result.scalar() or 0
+
+    offset = (page - 1) * limit
+    query = base.order_by(projects.c.created_at.desc()).offset(offset).limit(limit)
     result = await conn.execute(query)
-    return list(result.fetchall())
+    return list(result.fetchall()), total
+
+
+async def user_has_access(conn: AsyncConnection, project_id: UUID, user_id: UUID) -> bool:
+    """Check if user owns the project or has tasks assigned in it."""
+    is_owner = await conn.execute(
+        sa.select(sa.literal(1)).where(
+            sa.and_(projects.c.id == project_id, projects.c.owner_id == user_id)
+        )
+    )
+    if is_owner.first():
+        return True
+    has_tasks = await conn.execute(
+        sa.select(sa.literal(1)).where(
+            sa.and_(tasks.c.project_id == project_id, tasks.c.assignee_id == user_id)
+        ).limit(1)
+    )
+    return has_tasks.first() is not None
+
+
+async def get_stats(conn: AsyncConnection, project_id: UUID) -> dict:
+    """Task counts by status and by assignee for a project."""
+    # Count by status
+    status_q = await conn.execute(
+        sa.select(tasks.c.status, sa.func.count().label("count"))
+        .where(tasks.c.project_id == project_id)
+        .group_by(tasks.c.status)
+    )
+    by_status = {row.status: row.count for row in status_q.fetchall()}
+
+    # Count by assignee (null assignee grouped as "unassigned")
+    assignee_q = await conn.execute(
+        sa.select(tasks.c.assignee_id, sa.func.count().label("count"))
+        .where(tasks.c.project_id == project_id)
+        .group_by(tasks.c.assignee_id)
+    )
+    by_assignee = {}
+    for row in assignee_q.fetchall():
+        key = str(row.assignee_id) if row.assignee_id else "unassigned"
+        by_assignee[key] = row.count
+
+    total = sum(by_status.values())
+    return {"total": total, "by_status": by_status, "by_assignee": by_assignee}
 
 
 async def get_by_id(conn: AsyncConnection, project_id: UUID) -> sa.Row | None:
@@ -38,14 +88,13 @@ async def create(conn: AsyncConnection, *, name: str, description: str | None, o
 
 
 async def update(conn: AsyncConnection, project_id: UUID, **fields) -> sa.Row | None:
-    """Partial update — only non-None fields are written."""
-    update_data = {k: v for k, v in fields.items() if v is not None}
-    if not update_data:
+    """Partial update — writes all provided fields, including explicit nulls."""
+    if not fields:
         return await get_by_id(conn, project_id)
     result = await conn.execute(
         sa.update(projects)
         .where(projects.c.id == project_id)
-        .values(**update_data)
+        .values(**fields)
         .returning(projects)
     )
     return result.first()
