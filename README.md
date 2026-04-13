@@ -199,6 +199,7 @@ Response (200):
   "by_status": { "todo": 1, "in_progress": 1, "done": 1 },
   "by_assignee": { "<user_uuid>": 2, "unassigned": 1 }
 }
+```
 
 ### Tasks
 
